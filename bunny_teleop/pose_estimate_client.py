@@ -8,7 +8,7 @@ from zmq.eventloop import zmqstream
 
 
 class PoseEstimateClient:
-    def __init__(self, port: int, host="localhost"):
+    def __init__(self, port: int, max_buffer_size: int = 1, host="localhost"):
         # Set up the ZMQ context and socket
         self.ctx = zmq.Context()
         self.sub_bind_to = f"tcp://{host}:{port}"
@@ -16,8 +16,8 @@ class PoseEstimateClient:
         self.sub_socket.connect(self.sub_bind_to)
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b"")
 
-        # Command buffer queue
-        self.command_queue = queue.Queue()
+        # Command buffer queue with a maximum size, rolling FIFO behavior
+        self.command_queue = queue.Queue(maxsize=max_buffer_size)
 
         # Setting up the IO loop in a separate thread
         self._thread = threading.Thread(target=self.run)
@@ -32,14 +32,15 @@ class PoseEstimateClient:
         loop.start()
 
     def handle_command(self, message):
-        """Deserialize and enqueue the received command."""
+        """Deserialize and enqueue the received command, maintaining a rolling buffer."""
         command = pickle.loads(message[0])
+        if self.command_queue.full():
+            self.command_queue.get()
         self.command_queue.put(command)
 
     def get_command(self):
         """Fetch and return the latest command from the buffer."""
         try:
-            # Return the next item from the queue, block if necessary until an item is available
             return self.command_queue.get_nowait()
         except queue.Empty:
             return None  # Return None if no command is available
